@@ -45,4 +45,9 @@ public @interface ExcelField {
 	 * @return
 	 */
 	int sort() default 0;
+
+	/**
+	 * 导出Excel列名
+	 */
+	String columnName() default "";
 }

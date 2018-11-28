@@ -1,5 +1,6 @@
 package cn.excel.export;
 
+import cn.excel.ExcelField;
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.lang.ObjectUtils;
 import org.apache.commons.lang.StringUtils;
@@ -11,6 +12,7 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.lang.reflect.Field;
 import java.util.*;
 
 /**
@@ -58,8 +60,14 @@ public class ExcelExport {
 	 */
 	private List<Map<String, Object>> dataList;
 
+    /**
+     * 注解@ExcelField属性集合
+     */
+	private List<Object[]> annotationList;
+
 	/**
-	 *
+	 * 自定义表头名（使用，分割）和key导出
+     *
 	 * @param columns 导出excel表头集合
 	 * @param keys 数据列Map中key集合
 	 * @param dataList 数据集合
@@ -76,6 +84,17 @@ public class ExcelExport {
 
 		this.initialize();
 	}
+
+    /**
+     * 通过类注解@ExcelField导出
+     *
+     * @param clazz
+     * @param dataList
+     */
+	public ExcelExport(Class clazz,List<Map<String,Object>> dataList) {
+        this.dataList = dataList;
+        this.initialize(clazz);
+    }
 
     /**
      * 初始化Excel
@@ -104,43 +123,71 @@ public class ExcelExport {
 		}
 	}
 
-	/**
-	 * 输出数据流
-	 * 
-	 * @param os
-	 *            输出数据流
-	 */
-	public ExcelExport write(OutputStream os) throws IOException {
-		wb.write(os);
-		wb.dispose();
-		return this;
-	}
+    /**
+     * 注解类初始化Excel
+     * @param clazz
+     */
+    private void initialize(Class clazz) {
+        this.wb = new SXSSFWorkbook(500);
+        this.sheet = wb.createSheet("Sheet1");
+        this.styles = createStyles(wb);
+        annotationList = new ArrayList<>();
+        Field[] fields = clazz.getDeclaredFields();
 
-	/**
-	 * 输出到客户端
-	 * 
-	 * @param fileName
-	 *            输出文件名
-	 */
-	public ExcelExport write(HttpServletResponse response, String fileName) throws IOException {
-		response.reset();
-		response.setContentType("application/octet-stream; charset=utf-8");
-		response.setHeader("Content-Disposition", "attachment; filename=\"" + java.net.URLEncoder.encode(fileName, "utf-8") + "\"");
-		this.write(response.getOutputStream());
-		return this;
-	}
+        //添加注解@ExcelField的属性
+        for (Field field : fields) {
+            ExcelField excelField = field.getAnnotation(ExcelField.class);
+            if (excelField != null) {
+                annotationList.add(new Object[]{field,excelField});
+            }
+        }
 
-	/**
-	 * 输出到文件（文件必须为xlsx格式）
-	 * 
-	 * @param filePath
-	 *            输出文件名
-	 */
-	public ExcelExport write(String filePath) throws IOException {
-		FileOutputStream os = new FileOutputStream(filePath);
-		this.write(os);
-		return this;
-	}
+        //通过注解排序
+        if (annotationList !=null && annotationList.size()>0) {
+            annotationList.sort((o1, o2) -> ((ExcelField) o1[1]).sort() < ((ExcelField) o2[1]).sort() ? 1:0);
+        }
+
+        //表头集合
+        List<String> headList = new ArrayList<>();
+        for (Object[] obj : annotationList) {
+            ExcelField excelField = (ExcelField) obj[1];
+            headList.add(excelField.columnName());
+        }
+
+        createHead(headList);
+        setDataList();
+    }
+
+    /**
+     * 创建表头
+     * @param headList
+     */
+    private void createHead(List<String> headList) {
+        if (headList != null && headList.size() > 0 ) {
+            Row row = sheet.createRow(rownum++);
+            for (int column = 0; column < headList.size(); column++) {
+                //添加单元格
+                addCell(row,column,headList.get(column));
+                row.getCell(column).setCellStyle(styles.get("header"));
+            }
+        }
+    }
+
+    /**
+     * 设置数据
+     */
+    public void setDataList() {
+        if (dataList != null && dataList.size() > 0 ) {
+            for (int column = 0; column < dataList.size(); column++) {
+                //填充数据
+                Row row = this.sheet.createRow(rownum++);
+                for (int i = 0; i < annotationList.size(); i++) {
+                    Field field = (Field)annotationList.get(i)[0];
+                    addCell(row,column,dataList.get(column).get(field.getName()));
+                }
+            }
+        }
+    }
 
 	/**
 	 * 添加一行
@@ -330,6 +377,44 @@ public class ExcelExport {
 		
 		return styles;
 	}
+
+	/**
+     * 输出数据流
+     *
+     * @param os
+     *            输出数据流
+     */
+    public ExcelExport write(OutputStream os) throws IOException {
+        wb.write(os);
+        wb.dispose();
+        return this;
+    }
+
+    /**
+     * 输出到客户端
+     *
+     * @param fileName
+     *            输出文件名
+     */
+    public ExcelExport write(HttpServletResponse response, String fileName) throws IOException {
+        response.reset();
+        response.setContentType("application/octet-stream; charset=utf-8");
+        response.setHeader("Content-Disposition", "attachment; filename=\"" + java.net.URLEncoder.encode(fileName, "utf-8") + "\"");
+        this.write(response.getOutputStream());
+        return this;
+    }
+
+    /**
+     * 输出到文件（文件必须为xlsx格式）
+     *
+     * @param filePath
+     *            输出文件名
+     */
+    public ExcelExport write(String filePath) throws IOException {
+        FileOutputStream os = new FileOutputStream(filePath);
+        this.write(os);
+        return this;
+    }
 
 	/**
 	 * Excel标题分析类，支持水平和垂直合并
